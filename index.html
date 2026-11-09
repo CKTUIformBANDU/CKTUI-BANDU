@@ -1,0 +1,387 @@
+```html
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>แปลงรูปเป็น Excel ตรวจสอบน้ำหนักห่อ</title>
+<!-- Tailwind CSS for sleek, modern UI -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- SheetJS for Excel export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Tesseract.js for robust in-browser OCR -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+  body { font-family: 'Prompt', sans-serif; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div class="max-w-5xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-2">
+      <div>
+        <h1 class="text-xl font-bold text-blue-600 flex items-center gap-2">
+          <span>📦</span> แปลงรูปเป็น Excel (ตรวจสอบน้ำหนักห่อ)
+        </h1>
+        <p class="text-xs text-slate-500">เช็คน้ำหนัก (รวมห่อ − ชั่ง) เกณฑ์ปกติ <b>5.0 – 5.6</b> อัตโนมัติในเบราว์เซอร์</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="ocrStatusBadge" class="text-xs px-3 py-1 bg-slate-100 text-slate-600 rounded-full font-medium">พร้อมใช้งาน</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-6 flex-1 w-full space-y-6">
+    <!-- Upload Card -->
+    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+      <label id="dropZone" class="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-8 cursor-pointer hover:border-blue-500 hover:bg-blue-50/50 transition duration-200 text-center">
+        <div class="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-2xl mb-3 shadow-inner">📸</div>
+        <span class="font-semibold text-slate-700 text-lg">คลิกเพื่อเลือกรูปภาพ หรือลากไฟล์มาวางที่นี่</span>
+        <span class="text-sm text-slate-400 mt-1">รองรับไฟล์รูปภาพหลายรูป (PNG, JPG, WEBP) สูงสุด 20 รูปต่อครั้ง</span>
+        <input id="fileInput" type="file" accept="image/*" multiple class="hidden">
+      </label>
+
+      <!-- Action Buttons -->
+      <div class="flex flex-wrap items-center justify-between gap-3 mt-5 pt-4 border-t border-slate-100">
+        <div class="flex flex-wrap gap-2">
+          <button id="btnProcess" disabled class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium px-5 py-2.5 rounded-xl shadow-sm transition flex items-center gap-2">
+            <span>⚙️</span> เริ่มอ่านค่าจากรูป (OCR)
+          </button>
+          <button id="btnExcel" disabled class="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium px-5 py-2.5 rounded-xl shadow-sm transition flex items-center gap-2">
+            <span>📊</span> ดาวน์โหลด Excel
+          </button>
+        </div>
+        <button id="btnClear" disabled class="text-rose-600 hover:bg-rose-50 border border-slate-200 disabled:opacity-30 px-4 py-2.5 rounded-xl transition text-sm font-medium">
+          ล้างทั้งหมด
+        </button>
+      </div>
+      <div id="statusMsg" class="text-sm text-slate-500 mt-3 font-medium"></div>
+    </div>
+
+    <!-- Progress Bar (Hidden by default) -->
+    <div id="progressContainer" class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hidden">
+      <div class="flex justify-between text-sm mb-1 font-medium">
+        <span id="progressText">กำลังประมวลผลรูปภาพ...</span>
+        <span id="progressPercent">0%</span>
+      </div>
+      <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+        <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+      </div>
+    </div>
+
+    <!-- Results Table Card -->
+    <div id="resultCard" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hidden">
+      <div class="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
+        <div class="flex items-center gap-3">
+          <h2 class="font-bold text-slate-700">ผลการตรวจสอบน้ำหนัก</h2>
+          <div id="summaryChips" class="flex gap-2 text-xs font-semibold"></div>
+        </div>
+        <p class="text-xs text-slate-400">💡 คุณสามารถแก้ไขตัวเลขในตารางได้โดยตรง ผลต่างและสถานะจะคำนวณใหม่ทันที</p>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-100/70 text-slate-600 text-xs font-semibold uppercase tracking-wider border-b border-slate-200">
+              <th class="p-3 text-center w-12">#</th>
+              <th class="p-3 w-20">รูปภาพ</th>
+              <th class="p-3">ชื่อไฟล์</th>
+              <th class="p-3">รวมห่อ</th>
+              <th class="p-3">ชั่ง</th>
+              <th class="p-3">ผลต่าง (รวมห่อ − ชั่ง)</th>
+              <th class="p-3 text-center">สถานะ (เกณฑ์ 5.0–5.6)</th>
+              <th class="p-3 text-center w-16">ลบ</th>
+            </tr>
+          </thead>
+          <tbody id="tableRows" class="divide-y divide-slate-100 text-sm"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Custom Modal Message (Instead of alert) -->
+  <div id="modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 text-center space-y-4 shadow-xl">
+      <div id="modalIcon" class="text-3xl">ℹ️</div>
+      <h3 id="modalTitle" class="font-bold text-lg text-slate-800">แจ้งเตือน</h3>
+      <p id="modalText" class="text-sm text-slate-600"></p>
+      <button onclick="closeModal()" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition">ตกลง</button>
+    </div>
+  </div>
+
+  <footer class="text-center py-6 text-xs text-slate-400 border-t border-slate-200 mt-auto">
+    ระบบประมวลผลรูปภาพและตารางอัจฉริยะทำงานโดยสมบูรณ์บนเบราว์เซอร์ของคุณ ปลอดภัยและเป็นส่วนตัว
+  </footer>
+
+<script>
+  const MIN_VAL = 5.0;
+  const MAX_VAL = 5.6;
+  let items = []; // โครงสร้างข้อมูลแต่ละรูป: { id, file, url, gross, net, status, error }
+  let worker = null;
+
+  const $ = id => document.getElementById(id);
+
+  function showModal(title, text, type='info') {
+    $('modalTitle').textContent = title;
+    $('modalText').textContent = text;
+    $('modalIcon').textContent = type === 'error' ? '❌' : (type === 'success' ? '✅' : 'ℹ️');
+    $('modal').classList.remove('hidden');
+  }
+  window.closeModal = () => $('modal').classList.add('hidden');
+
+  function setMsg(txt) { $('statusMsg').textContent = txt; }
+
+  // เริ่มต้น Tesseract Worker ล่วงหน้าเพื่อให้พร้อมใช้งานรวดเร็ว
+  async function initWorker() {
+    try {
+      setMsg('กำลังเตรียมระบบอ่านตัวเลขภาษาไทย/อังกฤษ...');
+      worker = await Tesseract.createWorker('eng+tha');
+      $('ocrStatusBadge.textContent') = 'พร้อมใช้งาน OCR';
+      $('ocrStatusBadge').className = 'text-xs px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full font-medium';
+      setMsg('');
+    } catch(e) {
+      console.error(e);
+      // Fallback ถ้าภาษาไทยโหลดไม่ได้ ให้ใช้ eng เท่านั้น
+      try {
+        worker = await Tesseract.createWorker('eng');
+        $('ocrStatusBadge').textContent = 'พร้อมใช้งาน (Eng OCR)';
+        $('ocrStatusBadge').className = 'text-xs px-3 py-1 bg-amber-100 text-amber-700 rounded-full font-medium';
+        setMsg('');
+      } catch(err) {
+        $('ocrStatusBadge').textContent = 'OCR ไม่พร้อมใช้งาน';
+        $('ocrStatusBadge').className = 'text-xs px-3 py-1 bg-rose-100 text-rose-700 rounded-full font-medium';
+        setMsg('ไม่สามารถโหลดระบบอ่านภาพได้ กรุณากรอกข้อมูลด้วยตนเอง');
+      }
+    }
+  }
+  window.addEventListener('DOMContentLoaded', initWorker);
+
+  // การจัดการไฟล์รูปภาพที่เลือก
+  const dropZone = $('dropZone');
+  const fileInput = $('fileInput');
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('border-blue-500', 'bg-blue-50/50'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-blue-500', 'bg-blue-50/50'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('border-blue-500', 'bg-blue-50/50');
+    if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+  });
+  fileInput.addEventListener('change', e => { if(e.target.files.length) handleFiles(e.target.files); });
+
+  function handleFiles(fileList) {
+    const newFiles = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+    if(!newFiles.length) {
+      showModal('แจ้งเตือน', 'กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'error');
+      return;
+    }
+
+    newFiles.forEach(file => {
+      items.push({
+        id: Math.random().toString(36.substring(2, 9)),
+        file: file,
+        url: URL.createObjectURL(file),
+        gross: '',
+        net: '',
+        status: 'wait'
+      });
+    });
+    fileInput.value = '';
+    renderTable();
+  }
+
+  // คำนวณผลต่างและสถานะ
+  function calculateItem(item) {
+    const g = parseFloat(item.gross);
+    const n = parseFloat(item.net);
+    if(isNaN(g) || isNaN(n)) return { diff: null, text: 'รอข้อมูล', badge: 'bg-slate-100 text-slate-500' };
+    const diff = Math.round((g - n) * 1000) / 1000;
+    if(diff >= MIN_VAL && diff <= MAX_VAL) {
+      return { diff, text: 'ปกติ', badge: 'bg-emerald-100 text-emerald-700 border border-emerald-200' };
+    } else {
+      return { diff, text: 'ผิดปกติ', badge: 'bg-rose-100 text-rose-700 border border-rose-200' };
+    }
+  }
+
+  // เรนเดอร์ตารางแสดงผล
+  function renderTable() {
+    const hasItems = items.length > 0;
+    $('resultCard').hidden = !hasItems;
+    $('btnProcess').disabled = !hasItems;
+    $('btnClear').disabled = !hasItems;
+    $('btnExcel').disabled = !hasItems;
+
+    const tbody = $('tableRows');
+    tbody.innerHTML = '';
+
+    let countNormal = 0;
+    let countAbnormal = 0;
+    let countDone = 0;
+
+    items.forEach((item, index) => {
+      const calc = calculateItem(item);
+      if(item.gross !== '' && item.net !== '') {
+        countDone++;
+        if(calc.text === 'ปกติ') countNormal++;
+        if(calc.text === 'ผิดปกติ') countAbnormal++;
+      }
+
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-50/80 transition';
+      tr.innerHTML = `
+        <td class="p-3 text-center text-slate-400 font-medium">${index + 1}</td>
+        <td class="p-3">
+          <img src="${item.url}" alt="thumb" class="w-12 h-12 object-cover rounded-lg border border-slate-200 shadow-sm cursor-pointer hover:scale-105 transition" onclick="window.open('${item.url}')">
+        </td>
+        <td class="p-3 font-medium text-slate-700 truncate max-w-[150px]" title="${item.file.name}">${item.file.name}</td>
+        <td class="p-3">
+          <input type="number" step="0.01" value="${item.gross}" data-id="${item.id}" data-field="gross" class="w-28 px-3 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-800 font-medium">
+        </td>
+        <td class="p-3">
+          <input type="number" step="0.01" value="${item.net}" data-id="${item.id}" data-field="net" class="w-28 px-3 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-800 font-medium">
+        </td>
+        <td class="p-3 font-bold text-slate-700">${calc.diff !== null ? calc.diff.toFixed(2) : '–'}</td>
+        <td class="p-3 text-center">
+          <span class="px-3 py-1 rounded-full text-xs font-semibold ${calc.badge}">${calc.text}</span>
+        </td>
+        <td class="p-3 text-center">
+          <button onclick="removeItem('${item.id}')" class="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition">🗑️</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // อัปเดต Summary Chips ด้านบนตาราง
+    const summaryHTML = `
+      <span class="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg">ทั้งหมด: ${items.length} รูป</span>
+      <span class="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg">ปกติ: ${countNormal}</span>
+      <span class="px-2.5 py-1 bg-rose-50 text-rose-700 rounded-lg">ผิดปกติ: ${countAbnormal}</span>
+    `;
+    $('summaryChips').innerHTML = summaryHTML;
+
+    // ผูก Event ให้กับ Input ทันทีหลังเรนเดอร์
+    tbody.querySelectorAll('input').forEach(input => {
+      input.addEventListener('input', e => {
+        const id = e.target.getAttribute('data-id');
+        const field = e.target.getAttribute('data-field');
+        const targetItem = items.find(i => i.id === id);
+        if(targetItem) {
+          targetItem[field] = e.target.value;
+          renderTable();
+        }
+      });
+    });
+  }
+
+  window.removeItem = (id) => {
+    const item = items.find(i => i.id === id);
+    if(item) URL.revokeObjectURL(item.url);
+    items = items.filter(i => i.id !== id);
+    renderTable();
+  };
+
+  // ฟังก์ชันแยกตัวเลขจากข้อความ OCR ที่อ่านได้
+  function extractNumbers(text) {
+    // ค้นหาตัวเลขทศนิยมหรือจำนวนเต็มในข้อความทั้งหมด
+    const matches = text.match(/\d+[\.,]\d+|\d+/g);
+    if (!matches) return [];
+    return matches.map(m => parseFloat(m.replace(',', '.'))).filter(n => !isNaN(n) && n > 0 && n < 100);
+  }
+
+  // เริ่มกระบวนการ OCR อัตโนมัติทุกรูป
+  $('btnProcess').addEventListener('click', async () => {
+    if(!worker) {
+      showModal('แจ้งเตือน', 'ระบบ OCR กำลังเตรียมพร้อม กรุณารอสักครู่แล้วลองใหม่', 'error');
+      return;
+    }
+
+    $('btnProcess').disabled = true;
+    $('btnClear').disabled = true;
+    $('progressContainer').classList.remove('hidden');
+
+    const total = items.length;
+    for(let i = 0; i < total; i++) {
+      const item = items[i];
+      const pct = Math.round(((i) / total) * 100);
+      $('progressBar').style.width = pct + '%';
+      $('progressPercent').textContent = pct + '%';
+      $('progressText').textContent = `กำลังอ่านรูปที่ ${i + 1} จาก ${total} (${item.file.name})...`;
+
+      try {
+        // ประมวลผลภาพด้วย Tesseract
+        const ret = await worker.recognize(item.file);
+        const text = ret.data.text;
+        console.log(`OCR Result for ${item.file.name}:`, text);
+
+        const numbers = extractNumbers(text);
+        if(numbers.length >= 2) {
+          // เรียงค่าจากมากไปน้อย สมมติว่าค่ามากคือ "รวมห่อ" ค่ารองลงมาคือ "ชั่ง"
+          numbers.sort((a, b) => b - a);
+          item.gross = numbers[0].toString();
+          item.net = numbers[1].toString();
+        } else if(numbers.length === 1) {
+          item.gross = numbers[0].toString();
+        }
+      } catch(err) {
+        console.error('OCR Error:', err);
+      }
+    }
+
+    $('progressBar').style.width = '100%';
+    $('progressPercent').textContent = '100%';
+    $('progressText').textContent = 'ประมวลผลเสร็จสิ้น!';
+    
+    setTimeout(() => {
+      $('progressContainer').classList.add('hidden');
+      $('btnProcess').disabled = false;
+      $('btnClear').disabled = false;
+      renderTable();
+      setMsg('อ่านข้อมูลเสร็จแล้ว คุณสามารถตรวจสอบและแก้ไขตัวเลขในตารางก่อนดาวน์โหลด Excel ได้ทันที');
+    }, 600);
+  });
+
+  // ดาวน์โหลด Excel ผ่าน SheetJS
+  $('btnExcel').addEventListener('click', () => {
+    if(!items.length) return;
+
+    const exportData = items.map((item, index) => {
+      const calc = calculateItem(item);
+      return {
+        "ลำดับ": index + 1,
+        "ชื่อไฟล์รูปภาพ": item.file.name,
+        "รวมห่อ": item.gross !== '' ? parseFloat(item.gross) : '',
+        "ชั่ง": item.net !== '' ? parseFloat(item.net) : '',
+        "ผลต่าง (รวมห่อ − ชั่ง)": calc.diff !== null ? calc.diff : '',
+        "สถานะ": calc.text
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    
+    // ตั้งค่าความกว้างคอลัมน์ใน Excel ให้สวยงาม
+    worksheet['!cols'] = [
+      { wch: 6 },
+      { wch: 30 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 22 },
+      { wch: 15 }
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "ตรวจสอบน้ำหนักห่อ");
+
+    XLSX.writeFile(workbook, "รายงานการตรวจสอบน้ำหนักห่อ.xlsx");
+  });
+
+  // ล้างข้อมูลทั้งหมด
+  $('btnClear').addEventListener('click', () => {
+    items.forEach(i => URL.revokeObjectURL(i.url));
+    items = [];
+    setMsg('');
+    renderTable();
+  });
+</script>
+</body>
+</html>
+```
